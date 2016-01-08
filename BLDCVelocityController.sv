@@ -32,8 +32,8 @@ logic apply_initial_commutation;
 /// diagnostics-related logic
 logic [7:0] address_out;
 logic [7:0] spi_data_to_send;
-logic data_received;
 logic set_new_data;
+logic clear_new_data_flag;
 
 /// TODO: add synchronizer to asynchronous encoder inputs.
 QuadratureEncoder encoder_instance(.clk(clk), .reset(reset),
@@ -124,14 +124,16 @@ motorCommutation motor_commutation_instance(
                     .pwm_phase_b(pwm_phase_b),
                     .pwm_phase_c(pwm_phase_c));
 
-spiSendReceive spi_inst(.cs(cs), .sck(sck), .mosi(mosi),
-                        .setNewData(set_new_data),
-                        .dataToSend(spi_data_to_send),
-                        .miso(miso), .dataReceived(data_received));
-
-dataCtrl data_ctrl_inst(.cs(cs), .sck(sck), .writeEnable(1'b0),
-                        .spiDataIn(data_received), .setNewData(set_new_data),
-                        .addressOut(address_out));
+spi_slave_interface #(.DATA_WIDTH(8))
+            spi_slave_inst(.clk(clk),
+                           .cs(cs), .sck(sck), .mosi(mosi),
+                           .miso(miso),
+                           .clear_new_data_flag(clear_new_data_flag),
+                           .synced_new_data_flag(clear_new_data_flag), // clear data as soon as we get it.
+                           .address_out(address_out),
+                           .write_enable(), // unused.
+                           .data_to_send(spi_data_to_send),
+                           .synced_data_received()); // unused
 
 diagnosticsSyncMem diagnostics_mem(.freezeData(~cs), .clk(clk),
                                    .encoder_count(encoder_count[15:0]),
