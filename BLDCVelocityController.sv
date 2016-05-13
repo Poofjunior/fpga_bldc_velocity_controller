@@ -24,7 +24,8 @@ logic [31:0] encoder_count;
 logic [31:0] time_per_tick;
 logic [12:0] torque_vector_pos;
 logic [15:0] raw_velocity;
-logic [15:0] raw_velocity_mux_out;
+logic signed [15:0] signed_velocity;
+logic signed [15:0] velocity_with_slow_cutoff;
 
 logic reset_encoder_count;
 logic apply_initial_commutation;
@@ -35,6 +36,8 @@ logic [7:0] spi_data_to_send;
 logic set_new_data;
 logic clear_new_data_flag;
 
+logic sign; // sign of velocity.
+
 /// TODO: add synchronizer to asynchronous encoder inputs.
 QuadratureEncoder encoder_instance(.clk(clk), .reset(reset),
                                    .sig_a(encoder_a), .sig_b(encoder_b),
@@ -43,9 +46,11 @@ QuadratureEncoder encoder_instance(.clk(clk), .reset(reset),
                                    .direction(encoder_direction));
 
 
-TickTimer tick_timer_instance( .clk(clk), .reset(reset),
-                                .state_change(encoder_change),
-                                .time_per_tick(time_per_tick));
+TickTimer tick_timer_instance(.clk(clk), .reset(reset),
+                              .state_change(encoder_change),
+                              .signIn(encoder_direction),
+                              .time_per_tick(time_per_tick),
+                              .signOut(sign));
 
 
 motor_control_unit control_unit_instance(
@@ -62,67 +67,69 @@ motor_control_unit control_unit_instance(
 TickTimeToVelocityLookup velocity_lut(.time_per_tick(time_per_tick[13:0]),
                                       .velocity(raw_velocity));
 
-
-assign raw_velocity_mux_out = (time_per_tick > 16'h07FF) ?
-                                    16'b0 :
-                                     raw_velocity;
-
-
-iirFilter iir_filter_instance(
-            .clk(clk), .reset(reset), .enable(filter_pulse),
-            .raw_velocity(raw_velocity_mux_out),
-            .filtered_velocity(filtered_velocity));
+assign signed_velocity = (sign) ?
+                             ~raw_velocity + 'b1: // invert the bits and add 1
+                             raw_velocity;
+assign velocity_with_slow_cutoff = (time_per_tick > 1023) ?
+                                        16'b0 :
+                                        signed_velocity;
 
 
-PIController pi_controller_instance(
-                .clk(clk),
-                .reset(reset),
-                .enable(control_loop_pulse),
-                .desired_velocity(desired_velocity),
-                .actual_velocity(filtered_velocity),
-                .kp(10), .ki(0),
-                .output_gain(output_gain));
-
-
-///FIXME: output is wrong in the RTL.  Wat.
-/*
-assign output_gain_mux_out = (controller_override) ?
-                                1'b1:
-                                output_gain;
-*/
-parameter [11:0] fixed_gain = 12'h7FF;
-always_comb
-begin
-    integer i;
-    for (i = 0; i < 12; i = i + 1)
-    begin
-        output_gain_mux_out[i] = (controller_override) ?
-                                    fixed_gain[i] :
-                                    output_gain[i];
-    end
-end
-
-
-//assign output_gain_mux_out = output_gain;
-
-torque_vector_pos advance_angle_generator( .encoder_ticks(encoder_count[12:0]),
-                                           .direction(output_gain[11]),
-                                           .torque_vector_pos(torque_vector_pos));
-
-
-fastModulo1170 fast_module_1170_instance(
-                    .clk(clk), .reset(reset),
-                    .encoder_input(torque_vector_pos),
-                    .input_mod_1170(input_mod_1170));
-
-
-motorCommutation motor_commutation_instance(
-                    .clk(clk), .reset(reset), .enable(commutation_enable),
-                    .gain(output_gain_mux_out),
-                    .torque_vector_position(input_mod_1170),
-                    .pwm_phase_a(pwm_phase_a),
-                    .pwm_phase_b(pwm_phase_b),
-                    .pwm_phase_c(pwm_phase_c));
+//iirFilter iir_filter_instance(
+//            .clk(clk), .reset(reset), .enable(filter_pulse),
+//            .raw_signed_velocity(velocity_mux_out),
+//            .filtered_velocity(filtered_velocity));
+//
+//
+//PIController pi_controller_instance(
+//                .clk(clk),
+//                .reset(reset),
+//                .enable(control_loop_pulse),
+//                .desired_velocity(desired_velocity),
+//                .actual_velocity(filtered_velocity),
+//                .kp(10), .ki(0),
+//                .output_gain(output_gain));
+//
+//
+/////FIXME: output is wrong in the RTL.  Wat.
+///*
+//assign output_gain_mux_out = (controller_override) ?
+//                                1'b1:
+//                                output_gain;
+//*/
+//parameter [11:0] fixed_gain = 12'h7FF;
+//always_comb
+//begin
+//    integer i;
+//    for (i = 0; i < 12; i = i + 1)
+//    begin
+//        output_gain_mux_out[i] = (controller_override) ?
+//                                    fixed_gain[i] :
+//                                    output_gain[i];
+//    end
+//end
+//
+//
+////assign output_gain_mux_out = output_gain;
+//
+//torque_vector_pos advance_angle_generator( .encoder_ticks(encoder_count[12:0]),
+//                                           .direction(output_gain[11]),
+//                                           .torque_vector_pos(torque_vector_pos));
+//
+//
+//fastModulo1170 fast_module_1170_instance(
+//                    .clk(clk), .reset(reset),
+//                    .encoder_input(torque_vector_pos),
+//                    .input_mod_1170(input_mod_1170));
+//
+//
+//motorCommutation motor_commutation_instance(
+//                    .clk(clk), .reset(reset), .enable(commutation_enable),
+//                    .gain(output_gain_mux_out),
+//                    .torque_vector_position(input_mod_1170),
+//                    .pwm_phase_a(pwm_phase_a),
+//                    .pwm_phase_b(pwm_phase_b),
+//                    .pwm_phase_c(pwm_phase_c));
 
 spi_slave_interface #(.DATA_WIDTH(8))
             spi_slave_inst(.clk(clk),
@@ -138,11 +145,11 @@ spi_slave_interface #(.DATA_WIDTH(8))
 diagnosticsSyncMem diagnostics_mem(.freezeData(~cs), .clk(clk),
                                    .encoder_count(encoder_count[15:0]),
                                    .time_per_tick(time_per_tick),
-                                   .raw_velocity(raw_velocity),
-                                   .filtered_velocity(filtered_velocity),
-                                   .output_gain({4'b0000, output_gain}),
-                                   .torque_vector_pos({3'b000, torque_vector_pos}),
-                                   .electrical_angle_ticks({4'b0000, input_mod_1170}),
-                                   .memAddress(address_out),
+                                   .raw_velocity(velocity_with_slow_cutoff),
+                                   //.filtered_velocity(filtered_velocity),
+                                   //.output_gain({4'b0000, output_gain}),
+                                   //.torque_vector_pos({3'b000, torque_vector_pos}),
+                                   //.electrical_angle_ticks({4'b0000, input_mod_1170}),
+                                   //.memAddress(address_out),
                                    .memData(spi_data_to_send));
 endmodule

@@ -4,8 +4,11 @@
  * April 15, 2015
  */
 
-module TickTimer ( input logic clk, reset, state_change,
-                  output logic [31:0] time_per_tick);
+module TickTimer ( input logic clk, reset,
+                   input logic state_change,
+                   input logic signIn,
+                  output logic [31:0] time_per_tick,
+                  output logic signOut);
 
 /// Default initial value to approximate a velocity of zero
 parameter MAX_TIME = 'hFFFFFFFF;
@@ -15,7 +18,6 @@ parameter MAX_TIME = 'hFFFFFFFF;
     logic [31:0] lastTickTime;  /// timestamp as of last recorded tick
 
     microsTimer microsTimerInst( .clk(clk), .reset(reset),
-                                 .stateChange(state_change),
                                  .micros(micros));
 
     always_ff @ (posedge clk, posedge reset)
@@ -29,6 +31,7 @@ parameter MAX_TIME = 'hFFFFFFFF;
         else
         begin
             currTickTime <= micros;
+            signOut <= signIn;
 
 /// update new time-per-tick each time the encoder state machine changes.
             if (state_change)
@@ -49,7 +52,7 @@ endmodule
 
 
 module microsTimer #(TICKS_PER_MICROSECOND = 50)
-                    (input logic clk, reset, stateChange,
+                    (input logic clk, reset,
                      output logic [31:0] micros);
 
     logic [5:0] mhzCount;
@@ -62,6 +65,7 @@ module microsTimer #(TICKS_PER_MICROSECOND = 50)
 /// logic for resetting everything
     assign mhzReset = reset | mhzCountReset;
 
+/// Increment mhz clock
     always_ff @ (posedge clk)
     begin
         if (mhzReset)
@@ -74,7 +78,7 @@ module microsTimer #(TICKS_PER_MICROSECOND = 50)
         end
     end
 
-
+/// Increment microsecond count.
     always_ff @ (posedge clk, posedge reset)
     begin
         if (reset)

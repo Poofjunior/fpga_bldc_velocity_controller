@@ -1,7 +1,7 @@
 module iirFilter(
         input logic clk, reset, enable,
-        input logic [15:0] raw_velocity,
-       output logic [15:0] filtered_velocity);
+        input logic signed [15:0] raw_signed_velocity,
+       output logic signed [15:0] filtered_velocity);
 
 logic [15:0] last_velocity;
 logic [15:0] in_out_difference;
@@ -21,7 +21,7 @@ begin
     else if (enable)
     begin
         last_velocity <= filtered_output;
-        attenuated_difference <= raw_velocity - last_velocity;
+        attenuated_difference <= raw_signed_velocity - last_velocity;
         filtered_velocity <= filtered_output;
     end
     else
